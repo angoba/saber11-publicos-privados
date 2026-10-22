@@ -1,0 +1,291 @@
+---
+title: "Pruebas Saber 11 — Bases de datos"
+subtitle: "Diferencias entre colegios públicos y privados"
+author: "Proyecto de Computación en la Nube"
+date: "`r format(Sys.Date(), '%d/%m/%Y')`"
+lang: es
+toc-title: "En este informe"
+output:
+  html_document:
+    theme: flatly
+    toc: true
+    toc_depth: 1
+    toc_float:
+      collapsed: false
+    code_folding: hide
+    self_contained: true
+    mathjax: null
+    fig_caption: true
+params:
+  archivo: "Saber_11.csv"
+  periodo: "20204"
+---
+
+```{r configuracion, include=FALSE}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(knitr)
+
+knitr::opts_chunk$set(echo = TRUE, message = FALSE,
+  fig.width = 10, fig.height = 5.2, out.width = '100%', dpi = 160,
+  fig.align = 'center', cache = FALSE)
+
+colores <- c('Público' = '#087F8C', 'Privado' = '#D66B45')
+etiquetas <- c(PUNT_LECTURA_CRITICA = 'Lectura crítica', PUNT_MATEMATICAS = 'Matemáticas',
+  PUNT_C_NATURALES = 'Ciencias naturales', PUNT_SOCIALES_CIUDADANAS = 'Sociales y ciudadanas',
+  PUNT_INGLES = 'Inglés', PUNT_GLOBAL = 'Global')
+areas <- names(etiquetas)[1:5]
+
+tema <- theme_minimal(base_size = 12, base_family = 'sans') +
+  theme(plot.title = element_text(face = 'bold', size = 16, colour = '#142D40'),
+    plot.subtitle = element_text(colour = '#607380', margin = margin(b = 14)),
+    plot.caption = element_text(colour = '#607380', hjust = 0, size = 9),
+    panel.grid.minor = element_blank(), panel.grid.major = element_line(colour = '#E7EDF1'),
+    strip.text = element_text(face = 'bold', colour = '#142D40'),
+    legend.position = 'top', legend.title = element_blank(),
+    plot.margin = margin(12, 18, 12, 12))
+```
+
+```{r lectura-y-preparacion, include=FALSE}
+# Leemos las columnas que vamos a utilizar.
+base <- read_csv(params$archivo,
+  col_select = c(PERIODO, ESTU_CONSECUTIVO, COLE_NATURALEZA,
+    FAMI_ESTRATOVIVIENDA, DESEMP_MATEMATICAS, all_of(names(etiquetas))),
+  col_types = cols(.default = col_character()),
+  locale = locale(encoding = 'UTF-8'), na = c('', 'NA', 'N/A', 'NULL'))
+problemas_lectura <- nrow(problems(base))
+base <- base |> mutate(across(all_of(names(etiquetas)), as.numeric))
+
+# Seleccionamos el período y nombramos los dos sectores.
+periodo <- params$periodo
+datos_periodo <- base |> filter(PERIODO == periodo) |>
+  mutate(sector = recode(COLE_NATURALEZA,
+    'OFICIAL' = 'Público', 'NO OFICIAL' = 'Privado', .default = NA_character_),
+    sector = factor(sector, levels = names(colores)))
+
+# Revisamos identificadores, sectores y rangos de puntaje.
+sin_sector <- sum(is.na(datos_periodo$sector))
+ids <- datos_periodo$ESTU_CONSECUTIVO
+duplicados_id <- sum(duplicated(ids[!is.na(ids)]))
+puntajes_areas <- as.matrix(select(datos_periodo, all_of(areas)))
+fuera_rango <- sum(puntajes_areas < 0 | puntajes_areas > 100, na.rm = TRUE) +
+  sum(datos_periodo$PUNT_GLOBAL < 0 | datos_periodo$PUNT_GLOBAL > 500, na.rm = TRUE)
+
+datos <- datos_periodo |> filter(!is.na(sector)) |>
+  mutate(across(all_of(areas), ~replace(.x, .x < 0 | .x > 100, NA_real_)),
+    PUNT_GLOBAL = replace(PUNT_GLOBAL, PUNT_GLOBAL < 0 | PUNT_GLOBAL > 500, NA_real_))
+
+# Pasamos los puntajes a formato largo y calculamos los resúmenes.
+largo <- datos |> select(sector, all_of(names(etiquetas))) |>
+  pivot_longer(-sector, names_to = 'variable', values_to = 'puntaje') |>
+  mutate(prueba = factor(unname(etiquetas[variable]), levels = unname(etiquetas)))
+
+resumen <- largo |> group_by(variable, prueba, sector) |>
+  summarise(n = sum(!is.na(puntaje)), faltantes = sum(is.na(puntaje)),
+    media = mean(puntaje, na.rm = TRUE), mediana = median(puntaje, na.rm = TRUE),
+    de = sd(puntaje, na.rm = TRUE),
+    q1 = quantile(puntaje, .25, na.rm = TRUE, names = FALSE),
+    q3 = quantile(puntaje, .75, na.rm = TRUE, names = FALSE), .groups = 'drop')
+
+brechas <- resumen |> select(variable, prueba, sector, n, media, mediana, de) |>
+  pivot_wider(names_from = sector, values_from = c(n, media, mediana, de)) |>
+  mutate(brecha = media_Privado - media_Público)
+
+brechas_areas <- brechas |> filter(variable %in% areas)
+global <- brechas |> filter(variable == 'PUNT_GLOBAL')
+area_validos <- largo |> filter(variable %in% areas, !is.na(puntaje))
+cuenta <- datos |> count(sector, name = 'Registros') |>
+  mutate(Porcentaje = 100 * Registros / sum(Registros))
+```
+
+<style>
+:root{--navy:#142d40;--teal:#087f8c;--orange:#d66b45;--line:#dfe7eb;--muted:#607380}
+body{background:#f1f5f7;color:#294354;font-family:'Segoe UI',Arial,sans-serif;font-size:16px;line-height:1.7}
+.main-container{max-width:1280px;margin-top:24px;margin-bottom:48px}
+.toc-content{background:white;border:1px solid var(--line);border-radius:14px;padding:34px 42px 48px!important}
+#header{background:var(--navy);border-top:6px solid var(--teal);border-radius:10px;padding:34px;margin-bottom:28px;color:white}
+#header h1.title{color:white;font-size:50px;letter-spacing:-2px;font-weight:750;margin:0 0 12px}
+#header .subtitle{color:#d1e6ee;font-size:21px;line-height:1.5;margin-bottom:20px}
+#header .author,#header .date{color:#bdd3df;font-size:12px;font-weight:400;margin:4px 0}
+h1,h2,h3{color:var(--navy);font-weight:700;line-height:1.35}
+.section.level1>h1{font-size:27px;border-top:1px solid var(--line);padding-top:25px;margin-top:38px}
+h2{font-size:21px}strong{color:var(--navy)}a{color:var(--teal)}
+.eyebrow{font-size:11px;letter-spacing:2px;color:var(--teal);font-weight:750;text-transform:uppercase}
+.intro{font-size:19px;line-height:1.6;color:var(--navy);margin:10px 0 22px}
+.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:24px 0}
+.card{background:#f7fafb;border:1px solid var(--line);border-top:3px solid var(--teal);border-radius:8px;padding:18px}
+.metric{font-size:29px;color:var(--navy);font-weight:750;line-height:1.4}
+.metric-label{font-size:12px;color:var(--muted);line-height:1.5;margin-top:5px}
+.lectura,.aviso{border-radius:6px;padding:15px 20px;margin:20px 0;font-size:15px}
+.lectura{background:#edf7f8;border-left:4px solid var(--teal)}
+.aviso{background:#fff5ed;border-left:4px solid var(--orange)}
+.tabla-scroll{overflow-x:auto}table{width:100%;font-size:13px;margin:14px 0 24px;border-collapse:collapse}
+thead{background:var(--navy);color:white}th,td{padding:10px 12px!important;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+tbody tr:nth-child(even){background:#f4f8fa}caption{caption-side:top;text-align:left;font-size:12px;color:var(--muted)}
+.figure{margin:24px 0}.caption{font-size:12px;color:var(--muted);line-height:1.5}
+pre{background:#f4f7f9;border:1px solid var(--line);border-radius:6px;font-size:12px}code{color:#3d6275;background:#eff5f7}
+#TOC{font-size:12px;background:transparent;border:0;max-height:85vh;overflow-y:auto}
+#TOC .active{background:var(--teal);border-radius:4px}
+
+@media(max-width:767px){.cards{grid-template-columns:1fr}.toc-content{padding:22px 18px!important}#header{padding:26px}body{font-size:15px}}
+@media print{body{background:white}#TOC,.code-folding-btn{display:none!important}.toc-content{width:100%!important;border:0;padding:0!important}.figure,table{break-inside:avoid}}
+</style>
+
+<div class="eyebrow">Exploración descriptiva</div>
+<p class="intro">Comparación del puntaje global, los resultados por competencia y su distribución entre colegios públicos y privados.</p>
+
+<div class="cards">
+<div class="card"><div class="metric">`r format(nrow(datos), big.mark = '.', decimal.mark = ',', scientific = FALSE)`</div><div class="metric-label">Registros del período analizado</div></div>
+<div class="card"><div class="metric">`r periodo`</div><div class="metric-label">Código de período</div></div>
+<div class="card"><div class="metric">`r round(global$brecha, 1)`</div><div class="metric-label">Diferencia global en puntos: privado − público</div></div>
+</div>
+
+# 1. Datos analizados
+
+Se comparan los resultados de colegios **oficiales (públicos)** y **no oficiales (privados)** del período **`r periodo`**. La base completa contiene **`r format(nrow(base), big.mark = '.', decimal.mark = ',', scientific = FALSE)` registros**.
+
+```{r muestra}
+cuenta |> rename(Sector = sector) |>
+  kable(digits = 1, caption = 'Composición del período analizado')
+
+calidad <- data.frame(
+  Control = c('Registros sin sector reconocido', 'Identificadores repetidos adicionales',
+    'Puntajes fuera de rango', 'Incidencias de lectura en el archivo'),
+  Total = c(sin_sector, duplicados_id, fuera_rango, problemas_lectura))
+kable(calidad, caption = 'Revisión de los datos')
+```
+
+Los resúmenes utilizan los puntajes disponibles en cada prueba. Los valores fuera de las escalas de 0 a 500 en global y de 0 a 100 en las áreas se registran como faltantes. Los promedios se calculan por registro.
+
+# 2. Puntaje global: nivel y distribución
+
+```{r resumen-global}
+resumen |> filter(variable == 'PUNT_GLOBAL') |>
+  transmute(Sector = sector, Válidos = n, Faltantes = faltantes,
+    Media = media, Mediana = mediana, `Desv. estándar` = de) |>
+  kable(digits = 1, caption = 'Resumen del puntaje global')
+```
+
+```{r histograma-global, fig.cap='Frecuencias relativas del puntaje global. Cada histograma suma 100% dentro de su sector.'}
+h <- datos |> filter(!is.na(PUNT_GLOBAL)) |> group_by(sector) |>
+  mutate(peso = 1 / n()) |> ungroup()
+
+ggplot(h, aes(PUNT_GLOBAL, weight = peso, fill = sector)) +
+  geom_histogram(binwidth = 10, boundary = 0, colour = 'white', linewidth = .25) +
+  facet_wrap(~sector, ncol = 2) + scale_fill_manual(values = colores) +
+  scale_y_continuous(labels = scales::label_percent(accuracy = 1)) +
+  labs(title = 'Distribución del puntaje global',
+    x = 'Puntaje global', y = 'Proporción del sector') +
+  tema + theme(legend.position = 'none')
+```
+
+<div class="lectura">
+La media privada es **`r round(global$media_Privado, 1)`** y la pública es **`r round(global$media_Público, 1)`**. La diferencia privado − público es de **`r round(global$brecha, 1)` puntos**.
+</div>
+
+# 3. Las cinco competencias y sus atípicos
+
+```{r boxplots-areas, fig.height=7.4, fig.cap='Las cajas contienen el 50% central de los puntajes. La línea interior es la mediana y el rombo blanco es la media. Los puntos fuera de los bigotes corresponden a la regla de 1,5 rangos intercuartílicos.'}
+ggplot(area_validos, aes(sector, puntaje, fill = sector)) +
+  geom_boxplot(width = .5, alpha = .8, outlier.size = .6, outlier.alpha = .12) +
+  stat_summary(fun = mean, geom = 'point', shape = 23, fill = 'white', size = 2.4) +
+  facet_wrap(~prueba, ncol = 2) +
+  scale_fill_manual(values = colores) + coord_cartesian(ylim = c(0, 100)) +
+  labs(title = 'Distribución de los puntajes por competencia',
+    x = NULL, y = 'Puntaje (0–100)') + tema + theme(legend.position = 'none')
+```
+
+Los boxplots muestran el centro, la dispersión y los valores atípicos de cada grupo. La altura de las cajas corresponde al rango intercuartílico.
+
+```{r tabla-areas}
+brechas_areas |> transmute(Prueba = prueba,
+  `Media pública` = media_Público, `Media privada` = media_Privado,
+  `Mediana pública` = mediana_Público, `Mediana privada` = mediana_Privado,
+  `DE pública` = de_Público, `DE privada` = de_Privado) |>
+  kable(digits = 1, caption = 'Medidas descriptivas por competencia')
+
+atipicos <- area_validos |>
+  left_join(resumen |> select(variable, sector, q1, q3), by = c('variable', 'sector')) |>
+  mutate(atipico = puntaje < q1 - 1.5 * (q3 - q1) | puntaje > q3 + 1.5 * (q3 - q1)) |>
+  group_by(prueba, sector) |>
+  summarise(porcentaje = 100 * mean(atipico), .groups = 'drop') |>
+  pivot_wider(names_from = sector, values_from = porcentaje)
+
+atipicos |> rename(Prueba = prueba) |>
+  kable(digits = 1, caption = 'Porcentaje de atípicos según la regla de Tukey')
+```
+
+# 4. Diferencias de medias por competencia
+
+```{r diferencias-areas, fig.height=4.8, fig.cap='La diferencia se calcula como media privada menos media pública. Los valores positivos indican una media mayor en el sector privado y los negativos una media mayor en el público.'}
+ggplot(brechas_areas, aes(brecha, reorder(prueba, brecha))) +
+  geom_vline(xintercept = 0, linetype = 2, colour = '#A4B5C0') +
+  geom_segment(aes(x = 0, xend = brecha, yend = reorder(prueba, brecha)),
+    colour = '#C5D1D9', linewidth = 1.4) +
+  geom_point(colour = colores['Privado'], size = 4) +
+  geom_text(aes(label = round(brecha, 1)), nudge_y = .2, colour = '#142D40', size = 3.6) +
+  scale_x_continuous(expand = expansion(mult = c(.1, .14))) +
+  labs(title = 'Diferencias de medias por competencia',
+    subtitle = 'Media privada menos media pública', x = 'Diferencia en puntos', y = NULL) + tema
+```
+
+```{r cifras-matematicas, include=FALSE}
+mat <- brechas_areas |> filter(variable == 'PUNT_MATEMATICAS')
+mayor <- brechas_areas |> slice_max(abs(brecha), n = 1, with_ties = FALSE)
+```
+
+<div class="lectura">
+En **matemáticas**, la media pública es **`r round(mat$media_Público, 1)`** y la privada es **`r round(mat$media_Privado, 1)`**. La diferencia es de **`r round(mat$brecha, 1)` puntos**. La mayor diferencia absoluta entre las áreas aparece en **`r mayor$prueba`**, con **`r round(abs(mayor$brecha), 1)` puntos**.
+</div>
+
+# 5. Matemáticas: niveles de desempeño
+
+```{r desempeno-matematicas, fig.height=4.2, fig.cap='Distribución de los niveles de desempeño reportados en el CSV, calculada dentro de cada sector.'}
+niveles <- datos |>
+  mutate(nivel = factor(DESEMP_MATEMATICAS, levels = as.character(1:4))) |>
+  filter(!is.na(nivel)) |> count(sector, nivel, .drop = FALSE) |>
+  group_by(sector) |> mutate(proporcion = n / sum(n),
+    posicion = cumsum(proporcion) - proporcion / 2) |> ungroup()
+
+ggplot(niveles, aes(sector, proporcion, fill = nivel)) +
+  geom_col(width = .5, position = position_stack(reverse = TRUE)) +
+  geom_text(data = filter(niveles, proporcion >= .06),
+    aes(y = posicion, label = paste0(round(proporcion * 100, 1), '%')),
+    size = 3.5, colour = 'white') +
+  coord_flip() + scale_fill_manual(values = c('#64788C', '#386F89', '#168D94', '#075B63'),
+    labels = paste('Nivel', 1:4), drop = FALSE) +
+  scale_y_continuous(labels = scales::label_percent()) +
+  labs(title = 'Niveles de desempeño en matemáticas',
+    x = NULL, y = 'Proporción dentro del sector') + tema
+```
+
+Las barras muestran la proporción de registros en cada nivel. Los porcentajes se calculan entre los registros con un nivel reportado de 1 a 4.
+
+# 6. Una mirada al contexto: estrato
+
+```{r estrato, fig.height=4.8, fig.cap='Puntaje global medio por estrato de vivienda. Se muestran estratos con al menos 30 puntajes válidos por sector.'}
+contexto <- datos |>
+  mutate(estrato = factor(FAMI_ESTRATOVIVIENDA,
+    levels = c('Sin Estrato', paste('Estrato', 1:6)))) |>
+  filter(!is.na(estrato)) |> group_by(estrato, sector) |>
+  summarise(n = sum(!is.na(PUNT_GLOBAL)), media = mean(PUNT_GLOBAL, na.rm = TRUE),
+    .groups = 'drop')
+
+comunes <- contexto |> filter(n >= 30) |> count(estrato) |> filter(n == 2)
+cx <- contexto |> filter(estrato %in% comunes$estrato)
+
+ggplot(cx, aes(estrato, media, colour = sector)) +
+  geom_point(position = position_dodge(width = .4), size = 3.6) +
+  scale_colour_manual(values = colores) +
+  labs(title = 'Puntaje global por estrato y sector',
+    x = NULL, y = 'Media del puntaje global') + tema
+```
+
+La comparación por estrato muestra las medias de ambos sectores dentro de cada categoría de vivienda. Permite observar cómo cambia la diferencia al considerar esta característica de los hogares.
+
+```{r detalle-estrato}
+cx |> rename(Estrato = estrato, Sector = sector, Válidos = n, Media = media) |>
+  kable(digits = 1, caption = 'Registros y medias de los grupos mostrados')
+```
